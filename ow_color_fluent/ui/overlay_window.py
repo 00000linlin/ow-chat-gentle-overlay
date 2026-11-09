@@ -57,7 +57,7 @@ BASE_REFERENCE_HEIGHT = MIN_HEIGHT
 FONT_BASE_TITLE = 10
 FONT_BASE_MODE = 8
 FONT_BASE_REGION = 8
-FONT_BASE_BODY = 9
+FONT_BASE_BODY = 12
 FONT_BASE_BTN = 9
 FONT_SCALE_MIN = 0.68
 FONT_SCALE_MAX = 1.05
@@ -265,6 +265,11 @@ class OverlayWindow(ctk.CTk):
         )
         self.region_label.configure(font=self._scaled_font(FONT_BASE_REGION))
         self.result_view.configure(font=self._scaled_font(FONT_BASE_BODY))
+        self.return_settings_btn.configure(
+            width=self._scaled_px(90),
+            height=self._scaled_px(24),
+            font=self._scaled_font(FONT_BASE_BTN),
+        )
         self.resize_tip.configure(
             width=self._resize_handle_size,
             height=self._resize_handle_size,
@@ -363,6 +368,19 @@ class OverlayWindow(ctk.CTk):
             command=self._on_close,
         )
         self.close_btn.pack(side="left")
+
+        self.return_settings_btn = ctk.CTkButton(
+            self.card,
+            text="返回设置",
+            width=self._scaled_px(90),
+            height=self._scaled_px(24),
+            font=self._scaled_font(FONT_BASE_BTN),
+            fg_color=COLOR_YELLOW,
+            hover_color="#D9AA00",
+            text_color=COLOR_BLACK,
+            corner_radius=5,
+            command=self.toggle_lock_mode,
+        )
 
         self.region_label = ctk.CTkLabel(
             self.card,
@@ -598,6 +616,7 @@ class OverlayWindow(ctk.CTk):
         self._apply_acrylic(False)
 
         if state == "hidden":
+            self.return_settings_btn.place_forget()
             self._set_root_colorkey(True)
             try:
                 self.attributes("-alpha", 1.0)
@@ -625,6 +644,7 @@ class OverlayWindow(ctk.CTk):
             return
 
         if state == "setup":
+            self.return_settings_btn.place_forget()
             self._set_root_colorkey(True)
             try:
                 self.attributes("-alpha", 0.72)
@@ -667,9 +687,10 @@ class OverlayWindow(ctk.CTk):
                 border_color=COLOR_GLASS_FALLBACK,
             )
             self._hide_setup_widgets()
-            self.result_view.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+            self.result_view.grid(row=0, column=0, sticky="nsew", padx=10, pady=(40, 10))
             if self._inplace_layer is not None:
                 self._inplace_layer.grid_remove()
+            self.return_settings_btn.place(relx=1.0, x=-12, y=8, anchor="ne")
             self.card.grid_rowconfigure(0, weight=1)
             self._set_click_through(False)
             self._refresh_font_scale_from_window()
@@ -978,7 +999,7 @@ class OverlayWindow(ctk.CTk):
         self.result_view.delete("1.0", "end")
         for line in rewritten.splitlines():
             if line.strip():
-                self._insert_colored_text(line, color=COLOR_PAPER)
+                self._insert_colored_text(line, color=COLOR_PAPER, bold=True)
 
     def update_translation_list(self, results: list[TransResult]) -> None:
         if self._render_inplace_overlay(results):
