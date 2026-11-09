@@ -14,7 +14,7 @@ from typing import Any
 import customtkinter as ctk
 
 from ..core.config import (
-    GLM_API_KEY,
+    DEEPSEEK_API_KEY,
     INPLACE_OVERLAY,
     PREFETCH_ENABLED,
     PREFETCH_INTERVAL_MS,
@@ -62,8 +62,8 @@ FONT_BASE_BTN = 9
 FONT_SCALE_MIN = 0.68
 FONT_SCALE_MAX = 1.05
 
-# F8 译文面板自动隐藏（毫秒，锁定模式下）
-GLASS_AUTO_HIDE_MS = int(os.getenv("GLASS_AUTO_HIDE_MS", "12000"))
+# 遮布结果默认常驻；只有 F9 解锁时才显示底层游戏画面。
+GLASS_AUTO_HIDE_MS = 0
 CAPTURE_HIDE_DELAY_MS = max(0, int(os.getenv("CAPTURE_HIDE_DELAY_MS", "35")))
 
 # Fries Cup 视觉样式：https://fries-cup.com/zh
@@ -97,7 +97,7 @@ def _enable_dpi_awareness() -> None:
 
 
 class OverlayWindow(ctk.CTk):
-    """主悬浮窗：可拖拽/缩放，支持锁定穿透与热键触发识别。"""
+    """主悬浮窗：半透明定位，锁定后不透明遮盖并改写可见聊天。"""
 
     def __init__(self) -> None:
         _enable_dpi_awareness()
@@ -126,14 +126,16 @@ class OverlayWindow(ctk.CTk):
         self._baseline_font_scale = 1.0
         self._last_scaled_h = 0
         self._visual_state = "setup"
+        self._last_frame_signature: str | None = None
         self._glass_hide_job: str | None = None
         self._glass_dismiss_bound = False
         self._acrylic_after_job: str | None = None
         self._prefetch_job: str | None = None
+        self._prefetch_launch_job: str | None = None
         self._inplace_labels: list[Any] = []
         self._inplace_layer: ctk.CTkFrame | None = None
 
-        self.title("OW-Color-Fluent-Translator")
+        self.title("OW Chat · 温和改写")
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self.configure(fg_color=TRANSPARENT_COLOR)
@@ -153,17 +155,13 @@ class OverlayWindow(ctk.CTk):
         self._update_region_label()
         self._set_status("待命", COLOR_YELLOW)
         self.result_view.delete("1.0", "end")
-        if not GLM_API_KEY.strip():
+        if not DEEPSEEK_API_KEY.strip():
             self._insert_colored_text(
-                "GLM_API_KEY 未配置：请在项目根目录创建 local_api_keys.py",
+                "DEEPSEEK_API_KEY 未配置：请在项目根目录创建 .env",
                 color=COLOR_YELLOW,
             )
-            self._insert_colored_text("示例：GLM_API_KEY = \"你的智谱Key\"", color=COLOR_MUTED)
         else:
-            self._insert_colored_text("F8 识别 · F9 锁定后游戏中透明", color=COLOR_MUTED)
-
-        # 后台预热 DeepSeek 指令前缀缓存，降低首次翻译 TTFT
-        self._runtime.submit(self._api_client.warm_translation_prefix())
+            self._insert_colored_text("F8 识别并改写 · F9 启用不透明遮布", color=COLOR_MUTED)
 
     def _get_screen_size(self) -> tuple[int, int]:
         if sys.platform.startswith("win"):
@@ -243,7 +241,7 @@ class OverlayWindow(ctk.CTk):
 
     def _apply_ui_scale(self) -> None:
         dot_w = self._scaled_px(10)
-        btn_w = self._scaled_px(72)
+        btn_w = self._scaled_px(88)
         btn_h = self._scaled_px(24)
         close_sz = self._scaled_px(24)
 
@@ -305,7 +303,7 @@ class OverlayWindow(ctk.CTk):
 
         self.title_label = ctk.CTkLabel(
             self.header,
-            text="OW Translator",
+            text="OW Chat · 温和改写",
             font=self._scaled_font(FONT_BASE_TITLE, "bold"),
             text_color=COLOR_WHITE,
             anchor="w",
@@ -325,8 +323,8 @@ class OverlayWindow(ctk.CTk):
 
         self.capture_btn = ctk.CTkButton(
             self.header_actions,
-            text=f"识别({HOTKEY_CAPTURE.upper()})",
-            width=self._scaled_px(72),
+            text=f"改写({HOTKEY_CAPTURE.upper()})",
+            width=self._scaled_px(88),
             height=self._scaled_px(24),
             font=self._scaled_font(FONT_BASE_BTN),
             fg_color=COLOR_YELLOW,
@@ -338,8 +336,8 @@ class OverlayWindow(ctk.CTk):
 
         self.lock_btn = ctk.CTkButton(
             self.header_actions,
-            text=f"锁定({HOTKEY_TOGGLE_LOCK.upper()})",
-            width=self._scaled_px(72),
+            text=f"遮布({HOTKEY_TOGGLE_LOCK.upper()})",
+            width=self._scaled_px(88),
             height=self._scaled_px(24),
             font=self._scaled_font(FONT_BASE_BTN),
             fg_color=COLOR_BLACK_DEEP,
@@ -593,7 +591,7 @@ class OverlayWindow(ctk.CTk):
         self.footer.grid_remove()
 
     def _set_visual_state(self, state: str) -> None:
-        """setup=编辑对齐 | hidden=F9 完全透明 | glass=F8 毛玻璃+译文。"""
+        """setup=半透明编辑对齐 | hidden=截图瞬间透明 | glass=不透明聊天遮布。"""
         self._visual_state = state
         self._cancel_glass_hide()
         self._unbind_glass_dismiss_events()
@@ -601,6 +599,10 @@ class OverlayWindow(ctk.CTk):
 
         if state == "hidden":
             self._set_root_colorkey(True)
+            try:
+                self.attributes("-alpha", 1.0)
+            except Exception:
+                pass
             self.card.pack_configure(padx=0, pady=0)
             self.card.configure(
                 fg_color=TRANSPARENT_COLOR,
@@ -614,6 +616,8 @@ class OverlayWindow(ctk.CTk):
             )
             self._hide_setup_widgets()
             self.result_view.grid_remove()
+            if self._inplace_layer is not None:
+                self._inplace_layer.grid_remove()
             if self._locked:
                 self._set_click_through(True)
             else:
@@ -622,6 +626,10 @@ class OverlayWindow(ctk.CTk):
 
         if state == "setup":
             self._set_root_colorkey(True)
+            try:
+                self.attributes("-alpha", 0.72)
+            except Exception:
+                pass
             self.card.pack_configure(padx=COLOR_FRAME_PAD, pady=COLOR_FRAME_PAD)
             self.card.configure(
                 fg_color=COLOR_CARD_SETUP,
@@ -640,33 +648,31 @@ class OverlayWindow(ctk.CTk):
             return
 
         if state == "glass":
-            # F8 译文态：启用 DWM 毛玻璃，让译文浮在模糊背景上，提升可读性。
-            # colorkey 透明依赖 WS_EX_LAYERED，会阻止 DWM 合成毛玻璃，故关闭 colorkey。
+            # 锁定态使用整块不透明面板遮住原聊天，改写结果留在同一区域。
             self._set_root_colorkey(False)
-            # acrylic 失败时的回退底色（深色，保证译文可读）；acrylic 成功时被毛玻璃覆盖。
             self.configure(fg_color=COLOR_GLASS_FALLBACK)
-            self.card.pack_configure(padx=COLOR_FRAME_PAD, pady=COLOR_FRAME_PAD)
+            try:
+                self.attributes("-alpha", 1.0)
+            except Exception:
+                pass
+            self.card.pack_configure(padx=0, pady=0)
             self.card.configure(
-                fg_color="transparent",
-                border_width=1,
-                border_color=COLOR_CARD_BORDER,
+                fg_color=COLOR_GLASS_FALLBACK,
+                border_width=0,
+                border_color=COLOR_GLASS_FALLBACK,
             )
             self.result_view.configure(
-                fg_color="transparent",
+                fg_color=COLOR_GLASS_FALLBACK,
                 border_width=0,
-                border_color="transparent",
+                border_color=COLOR_GLASS_FALLBACK,
             )
             self._hide_setup_widgets()
-            self.result_view.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+            self.result_view.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
             if self._inplace_layer is not None:
-                self._inplace_layer.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
-                self._inplace_layer.lower(self.result_view)
+                self._inplace_layer.grid_remove()
             self.card.grid_rowconfigure(0, weight=1)
             self._set_click_through(False)
-            self._bind_glass_dismiss_events()
             self._refresh_font_scale_from_window()
-            self._apply_acrylic(True)  # 启用毛玻璃（Win11 DWM Acrylic / Mica）
-            self._schedule_glass_hide()
 
     def trigger_capture(self) -> None:
         if self._busy:
@@ -685,8 +691,13 @@ class OverlayWindow(ctk.CTk):
         self._set_status("识别中", COLOR_YELLOW)
 
         if self._locked:
+            self._cancel_prefetch()
+            self._last_frame_signature = None
             self._set_visual_state("hidden")
-            self._launch_pipeline(region, restore_after_capture=False)
+            self.after(
+                CAPTURE_HIDE_DELAY_MS,
+                lambda: self._launch_pipeline(region, restore_after_capture=False),
+            )
         else:
             self._set_visual_state("setup")
             self.withdraw()
@@ -712,7 +723,7 @@ class OverlayWindow(ctk.CTk):
         elif self._locked:
             self._set_visual_state("glass")
         self.result_view.delete("1.0", "end")
-        self._insert_colored_text("识别中...", color=COLOR_YELLOW, newline=False)
+        self._insert_colored_text("正在识别并改写聊天…", color=COLOR_YELLOW, newline=False)
 
     def _launch_pipeline(
         self, region: dict[str, int], *, restore_after_capture: bool
@@ -734,24 +745,25 @@ class OverlayWindow(ctk.CTk):
     ) -> dict[str, Any]:
         capture_data = await asyncio.to_thread(capture_region_to_base64, region)
         self.after(0, self._show_capture_progress, restore_after_capture)
+        signature = await asyncio.to_thread(
+            self._api_client.chat_text_fingerprint, capture_data
+        )
+        self._last_frame_signature = signature
+        rewritten = await self._api_client.rewrite_chat_image(capture_data)
+        return {"rewrite": rewritten, "signature": signature}
 
-        # 优先复用锁定态后台预取的新鲜 OCR，跳过一次网络往返
-        ocr_results = self._api_client.take_prefetch_ocr_if_fresh(max_age_sec=1.2)
-        if ocr_results is None:
-            ocr_results = await self._api_client.process_multi_channel_ocr(capture_data)
-        else:
-            # 预取命中时仍异步刷新下一次预取指纹
-            self._api_client.remember_prefetch_ocr(ocr_results)
-
-        trans_results = await self._api_client.translate_ocr_results(ocr_results)
-        return {"ocr": ocr_results, "trans": trans_results}
-
-    async def _prefetch_ocr_once(self, region: dict[str, int]) -> None:
+    async def _prefetch_ocr_once(self, region: dict[str, int]) -> dict[str, Any]:
         capture_data = await asyncio.to_thread(capture_region_to_base64, region)
-        ocr_results = await self._api_client.process_multi_channel_ocr(capture_data)
-        self._api_client.remember_prefetch_ocr(ocr_results)
-        # 预翻译：词典/记忆命中可提前写入，F8 时几乎瞬时
-        await self._api_client.translate_ocr_results(ocr_results)
+        self.after(0, self._restore_mask_after_capture)
+        signature = await asyncio.to_thread(
+            self._api_client.chat_text_fingerprint, capture_data
+        )
+        if signature == self._last_frame_signature:
+            return {"changed": False, "signature": signature}
+
+        self._last_frame_signature = signature
+        rewritten = await self._api_client.rewrite_chat_image(capture_data)
+        return {"changed": True, "signature": signature, "rewrite": rewritten}
 
     def _schedule_prefetch(self) -> None:
         self._cancel_prefetch()
@@ -766,6 +778,12 @@ class OverlayWindow(ctk.CTk):
             except Exception:
                 pass
             self._prefetch_job = None
+        if self._prefetch_launch_job is not None:
+            try:
+                self.after_cancel(self._prefetch_launch_job)
+            except Exception:
+                pass
+            self._prefetch_launch_job = None
 
     def _run_prefetch_tick(self) -> None:
         self._prefetch_job = None
@@ -773,17 +791,61 @@ class OverlayWindow(ctk.CTk):
             self._schedule_prefetch()
             return
         region = self._current_capture_region()
+        self._set_visual_state("hidden")
+        self._prefetch_launch_job = self.after(
+            CAPTURE_HIDE_DELAY_MS, lambda: self._launch_prefetch(region)
+        )
+
+    def _launch_prefetch(self, region: dict[str, int]) -> None:
+        self._prefetch_launch_job = None
+        if self._closing:
+            return
+        if not self._locked:
+            self._set_visual_state("setup")
+            return
+        if self._busy:
+            self._set_visual_state("glass")
+            self._schedule_prefetch()
+            return
+        self._busy = True
         future = self._runtime.submit(self._prefetch_ocr_once(region))
 
         def _done(fut: Future) -> None:
             try:
-                fut.result()
-            except Exception:
-                pass
+                payload = fut.result()
+                error = ""
+            except Exception as exc:
+                payload = None
+                error = str(exc)
             if not self._closing:
-                self.after(0, self._schedule_prefetch)
+                self.after(0, self._handle_prefetch_done, payload, error)
 
         future.add_done_callback(_done)
+
+    def _restore_mask_after_capture(self) -> None:
+        if not self._closing and self._locked:
+            self._set_visual_state("glass")
+
+    def _handle_prefetch_done(self, payload: object, error: str) -> None:
+        self._busy = False
+        if not self._locked or self._closing:
+            return
+        self._set_visual_state("glass")
+        if error:
+            self._show_rewrite_message("改写暂不可用，原聊天仍已遮盖。请检查 .env 和网络；更改配置后重启，再按 F8 重试。")
+            self._set_status("改写失败", COLOR_YELLOW)
+        elif isinstance(payload, dict) and payload.get("changed"):
+            rewritten = str(payload.get("rewrite", "")).strip()
+            if rewritten:
+                self.update_rewrite_output(rewritten)
+                self._set_status("聊天已改写", COLOR_YELLOW)
+            else:
+                self._show_rewrite_message("当前区域没有可显示的玩家聊天。")
+                self._set_status("遮布已启用", COLOR_YELLOW)
+        else:
+            self._set_status("遮布已启用 · 等待新聊天", COLOR_YELLOW)
+        self._schedule_prefetch()
+        self._run_pending_capture_if_needed()
 
     def _clear_inplace_labels(self) -> None:
         for label in self._inplace_labels:
@@ -846,28 +908,35 @@ class OverlayWindow(ctk.CTk):
             self._set_visual_state("setup")
 
         if error:
-            self._set_status("失败", COLOR_YELLOW)
-            self._append_message(f"识别失败：{error}", COLOR_YELLOW)
+            self._set_status("改写失败", COLOR_YELLOW)
+            if self._locked:
+                self._show_rewrite_message("改写失败，原聊天仍已遮盖。请检查 .env 和网络；更改配置后重启，再按 F8 重试。")
+            else:
+                self._append_message(f"改写失败：{error}", COLOR_YELLOW)
+            if self._locked:
+                self._schedule_prefetch()
             self._run_pending_capture_if_needed()
             return
         if not isinstance(payload, dict):
-            self._set_status("失败", COLOR_YELLOW)
-            self._append_message("识别失败：返回结果异常。", COLOR_YELLOW)
+            self._set_status("改写失败", COLOR_YELLOW)
+            if self._locked:
+                self._show_rewrite_message("改写失败，原聊天仍已遮盖。请按 F8 重试。")
+                self._schedule_prefetch()
+            else:
+                self._append_message("改写失败：返回结果异常。", COLOR_YELLOW)
             self._run_pending_capture_if_needed()
             return
 
-        trans_results = payload.get("trans", [])
-        ocr_results = payload.get("ocr", [])
-
-        if trans_results:
-            self.update_translation_list(trans_results)
-            self._set_status("完成", COLOR_YELLOW)
+        rewritten = str(payload.get("rewrite", "")).strip()
+        if rewritten:
+            self.update_rewrite_output(rewritten)
+            self._set_status("聊天已改写", COLOR_YELLOW)
         else:
-            self._set_status("无结果", COLOR_YELLOW)
-            self._render_ocr_fallback(ocr_results)
+            self._set_status("没有可显示的聊天", COLOR_YELLOW)
+            self._show_rewrite_message("当前区域没有可显示的玩家聊天。")
 
         if self._locked:
-            self._schedule_glass_hide()
+            self._schedule_prefetch()
         else:
             self._set_visual_state("setup")
 
@@ -897,6 +966,19 @@ class OverlayWindow(ctk.CTk):
         content = text + ("\n" if newline else "")
         self.result_view.insert("end", content, tag_name)
         self.result_view.see("end")
+
+    def _show_rewrite_message(self, text: str) -> None:
+        self._show_list_view()
+        self.result_view.delete("1.0", "end")
+        self._insert_colored_text(text, color=COLOR_PAPER)
+
+    def update_rewrite_output(self, rewritten: str) -> None:
+        """用整块改写结果覆盖聊天区域，不回退显示 OCR 原文。"""
+        self._show_list_view()
+        self.result_view.delete("1.0", "end")
+        for line in rewritten.splitlines():
+            if line.strip():
+                self._insert_colored_text(line, color=COLOR_PAPER)
 
     def update_translation_list(self, results: list[TransResult]) -> None:
         if self._render_inplace_overlay(results):
@@ -946,13 +1028,14 @@ class OverlayWindow(ctk.CTk):
     def _apply_lock_mode(self, locked: bool) -> None:
         self._locked = locked
         if locked:
-            self.mode_label.configure(text="锁定穿透")
+            self.mode_label.configure(text="不透明遮布已启用")
             self.lock_btn.configure(text=f"解锁({HOTKEY_TOGGLE_LOCK.upper()})")
-            self._set_visual_state("hidden")
+            self._set_visual_state("glass")
+            self._show_rewrite_message("遮布已启用 · 正在等待聊天改写")
             self._schedule_prefetch()
         else:
             self.mode_label.configure(text="编辑模式")
-            self.lock_btn.configure(text=f"锁定({HOTKEY_TOGGLE_LOCK.upper()})")
+            self.lock_btn.configure(text=f"遮布({HOTKEY_TOGGLE_LOCK.upper()})")
             self._cancel_prefetch()
             self._show_list_view()
             self._set_visual_state("setup")
@@ -1015,7 +1098,7 @@ class OverlayWindow(ctk.CTk):
     def _set_status(self, text: str, color: str) -> None:
         self.dot_status.configure(text_color=color)
         if self._locked:
-            self.mode_label.configure(text=f"锁定穿透 · {text}", text_color=color)
+            self.mode_label.configure(text=f"不透明遮布 · {text}", text_color=color)
         else:
             self.mode_label.configure(text=f"编辑模式 · {text}", text_color=color)
 
@@ -1027,7 +1110,7 @@ class OverlayWindow(ctk.CTk):
         if self._visual_state != "setup":
             return
         region = self._current_capture_region()
-        lock_text = "锁定穿透" if self._locked else "可拖拽/可缩放"
+        lock_text = "不透明遮布" if self._locked else "可拖拽/可缩放 · 半透明预览"
         self.region_label.configure(
             text=(
                 f"区域: x={region['left']} y={region['top']} "

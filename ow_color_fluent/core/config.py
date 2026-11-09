@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
+from .paths import project_root
 
 try:
     from local_api_keys import DEEPSEEK_API_KEY as FILE_DEEPSEEK_API_KEY
@@ -15,9 +16,9 @@ except ImportError:
     FILE_DEEPSEEK_API_KEY = ""
     FILE_GLM_API_KEY = ""
 
-load_dotenv()
+load_dotenv(dotenv_path=project_root() / ".env")
 
-# API 与模型配置（后续 `api_client.py` 直接复用）
+# 旧版 OCR 接口配置仍保留给兼容 API；当前主界面不依赖 GLM。
 GLM_OCR_URL: str = os.getenv(
     "GLM_OCR_URL", "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
 )
@@ -27,14 +28,14 @@ GLM_API_KEY: str = (FILE_GLM_API_KEY or os.getenv("GLM_API_KEY", "")).strip()
 DEEPSEEK_URL: str = os.getenv(
     "DEEPSEEK_URL", "https://api.deepseek.com/chat/completions"
 )
-# deepseek-v4-flash + thinking=disabled ≈ 原 deepseek-chat（非思考）快路径
-DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+# deepseek-flash 是当前 DeepSeek Vision 与 Chat Completions 的模型名。
+DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
 DEEPSEEK_API_KEY: str = (FILE_DEEPSEEK_API_KEY or os.getenv("DEEPSEEK_API_KEY", "")).strip()
-# 关闭 thinking，否则 v4-flash 默认开启 CoT，无法压到 1s 内
+# 默认关闭 thinking，减少实时改写等待。
 DEEPSEEK_THINKING_DISABLED: bool = os.getenv(
     "DEEPSEEK_THINKING_DISABLED", "1"
 ).strip().lower() not in {"0", "false", "no", "off"}
-DEEPSEEK_MAX_TOKENS: int = max(64, int(os.getenv("DEEPSEEK_MAX_TOKENS", "256")))
+DEEPSEEK_MAX_TOKENS: int = max(256, int(os.getenv("DEEPSEEK_MAX_TOKENS", "2048")))
 
 HTTP_TIMEOUT_SEC: float = float(os.getenv("HTTP_TIMEOUT_SEC", "18"))
 OCR_MAX_CONCURRENT: int = max(1, int(os.getenv("OCR_MAX_CONCURRENT", "3")))
@@ -46,15 +47,15 @@ OCR_CHANNELS: tuple[str, ...] = tuple(
 # hybrid=词典/行缓存优先 + OCR + 仅对未命中行调 LLM
 # oneshot=单次视觉模型（实验，需 PIPELINE_VISION_URL）
 PIPELINE_MODE: str = os.getenv("PIPELINE_MODE", "hybrid").strip().lower()
-# 锁定态后台预取 OCR，F8 只补翻译缺口
+# 锁定态定时检查聊天区域；无变化时只做本地颜色掩码签名比较。
 PREFETCH_ENABLED: bool = os.getenv("PREFETCH_ENABLED", "1").strip().lower() not in {
     "0",
     "false",
     "no",
     "off",
 }
-PREFETCH_INTERVAL_MS: int = max(200, int(os.getenv("PREFETCH_INTERVAL_MS", "800")))
-# 译文原位覆盖：用 OCR bbox 画在毛玻璃上盖住原文
+PREFETCH_INTERVAL_MS: int = max(1000, int(os.getenv("PREFETCH_INTERVAL_MS", "1800")))
+# 旧版 OCR bbox 原位覆盖开关；当前视觉改写使用整块不透明遮布。
 INPLACE_OVERLAY: bool = os.getenv("INPLACE_OVERLAY", "1").strip().lower() not in {
     "0",
     "false",

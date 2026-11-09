@@ -1,9 +1,10 @@
-"""异步 API 客户端：内存截图、多通道 OCR、混合快路径翻译。"""
+"""异步 API 客户端：内存截图、DeepSeek Vision 聊天改写与兼容 OCR。"""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import time
@@ -35,7 +36,11 @@ from ..core.config import (
     OCRResult,
     TransResult,
 )
-from ..core.prompts import build_translation_messages, build_warmup_messages
+from ..core.prompts import (
+    build_chat_rewrite_messages,
+    build_translation_messages,
+    build_warmup_messages,
+)
 from .phrase_cache import (
     GLOBAL_TRANSLATION_MEMORY,
     OW_PHRASE_DICT,
@@ -310,7 +315,7 @@ def _iter_source_units(ocr_results: Sequence[OCRResult]) -> list[tuple[OCRResult
 
 
 class OWColorFluentApiClient:
-    """`glm-ocr` + `deepseek-v4-flash` 混合快路径客户端。"""
+    """OW-Light-Translator API 客户端；主路径使用 DeepSeek Vision。"""
 
     def __init__(
         self,
@@ -381,10 +386,64 @@ class OWColorFluentApiClient:
             "max_tokens": DEEPSEEK_MAX_TOKENS,
             "messages": messages,
         }
-        # v4-flash 默认 thinking=enabled，实时字幕必须关掉
+        # 禁用思考模式，缩短实时聊天改写等待。
         if DEEPSEEK_THINKING_DISABLED:
             payload["thinking"] = {"type": "disabled"}
         return payload
+
+    @staticmethod
+    def chat_text_fingerprint(capture_data: CaptureData) -> str:
+        """只对聊天颜色掩码计算签名，避免背景动画导致重复请求模型。"""
+        image_bgr = decode_base64_image_to_bgr(capture_data.image_base64)
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        combined = np.zeros(image_rgb.shape[:2], dtype=np.uint8)
+        for tag in COLOR_PALETTE:
+            lower = np.array(tag.rgb_min, dtype=np.uint8)
+            upper = np.array(tag.rgb_max, dtype=np.uint8)
+            combined = cv2.bitwise_or(combined, cv2.inRange(image_rgb, lower, upper))
+        return hashlib.sha256(combined.tobytes()).hexdigest()
+
+    async def rewrite_chat_image(self, capture_data: CaptureData) -> str:
+        """直接用 DeepSeek Vision 识别并净化截图中的聊天。"""
+        if not self._deepseek_api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY 未配置")
+
+        payload: dict[str, Any] = {
+            "model": self._deepseek_model,
+            "messages": build_chat_rewrite_messages(capture_data.image_base64),
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+            "max_tokens": DEEPSEEK_MAX_TOKENS,
+        }
+        if DEEPSEEK_THINKING_DISABLED:
+            payload["thinking"] = {"type": "disabled"}
+
+        response = await self.client.post(
+            self._deepseek_url,
+            headers={"Authorization": f"Bearer {self._deepseek_api_key}"},
+            json=payload,
+        )
+        response.raise_for_status()
+        content = _extract_chat_content(response.json())
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("DeepSeek 返回的改写结果不是有效 JSON") from exc
+
+        messages = parsed.get("messages", []) if isinstance(parsed, dict) else []
+        if not isinstance(messages, list):
+            raise RuntimeError("DeepSeek 返回的 messages 格式不正确")
+
+        output_lines: list[str] = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            prefix = str(item.get("prefix", "")).strip().replace("\n", " ")
+            output_lines.append(f"{prefix} {text}" if prefix else text)
+        return "\n".join(output_lines)
 
     async def process_multi_channel_ocr(
         self, capture_data: CaptureData

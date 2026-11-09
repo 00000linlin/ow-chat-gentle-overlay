@@ -2,6 +2,7 @@
 """PyInstaller 打包配置 — 运行 scripts/build.ps1 或 scripts/build.bat。"""
 
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 block_cipher = None
 ROOT = Path(SPECPATH)
@@ -13,7 +14,7 @@ a = Analysis(
     datas=[
         (str(ROOT / "img" / "icon.ico"), "img"),
         (str(ROOT / "img" / "icon.png"), "img"),
-    ],
+    ] + collect_data_files("customtkinter"),
     hiddenimports=[
         "customtkinter",
         "PIL",
@@ -48,7 +49,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="OW-Color-Fluent-Translator",
+    name="OW-Chat-Gentle-Overlay",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
