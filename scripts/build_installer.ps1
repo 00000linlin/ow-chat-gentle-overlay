@@ -41,5 +41,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup compilation failed."
 }
 
-$Installer = Join-Path $ProjectRoot "dist\OW-Chat-Gentle-Overlay-Setup-0.1.1.exe"
+$Installer = Join-Path $ProjectRoot "dist\OW-Chat-Gentle-Overlay-Setup-0.1.2.exe"
 Write-Host "Installer created: $Installer" -ForegroundColor Green

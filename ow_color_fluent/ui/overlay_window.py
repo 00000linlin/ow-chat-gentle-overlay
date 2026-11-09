@@ -135,7 +135,7 @@ class OverlayWindow(ctk.CTk):
         self._inplace_labels: list[Any] = []
         self._inplace_layer: ctk.CTkFrame | None = None
 
-        self.title("OW Chat · 温和改写")
+        self.title("OW Chat · 客观改写")
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self.configure(fg_color=TRANSPARENT_COLOR)
@@ -308,7 +308,7 @@ class OverlayWindow(ctk.CTk):
 
         self.title_label = ctk.CTkLabel(
             self.header,
-            text="OW Chat · 温和改写",
+            text="OW Chat · 客观改写",
             font=self._scaled_font(FONT_BASE_TITLE, "bold"),
             text_color=COLOR_WHITE,
             anchor="w",

@@ -1,5 +1,5 @@
 #define AppName "OW Chat Gentle Overlay"
-#define AppVersion "0.1.1"
+#define AppVersion "0.1.2"
 #define AppExeName "OW-Chat-Gentle-Overlay.exe"
 
 [Setup]
@@ -21,7 +21,7 @@ InfoBeforeFile=THIRD_PARTY_NOTICES.md
 WizardStyle=modern
 Compression=lzma2/ultra64
 SolidCompression=yes
-VersionInfoVersion=0.1.1.0
+VersionInfoVersion=0.1.2.0
 VersionInfoProductName={#AppName}
 VersionInfoProductVersion={#AppVersion}
 VersionInfoDescription=DeepSeek-powered Overwatch chat rewrite overlay

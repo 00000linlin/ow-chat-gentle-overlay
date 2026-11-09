@@ -1,4 +1,4 @@
-# OW-Light-Translator · 聊天温和改写
+# OW-Light-Translator · 聊天客观改写
 
 基于 OW-Light-Translator 的 Windows 外部悬浮窗。它读取你对齐的屏幕区域，把聊天截图交给 DeepSeek Vision，按原语言重写后显示在原聊天区域。
 
@@ -7,7 +7,7 @@
 ## 行为
 
 - 保留玩家名、频道顺序、事实、英雄名、数字和战术信息；改写字幕使用更大的字体。
-- 将恶意或辱骂内容改成善意表达，去除嘲讽；其他发言改成谦逊、礼貌的语气。
+- 将恶意或辱骂内容改成客观、中性、尊重的表达，去除嘲讽；其他发言保持原意并改成清晰、礼貌的语气，不刻意卑微或添加奉承。
 - `F9` 启用不透明遮布；锁定时程序每 1.8 秒检查一次画面，只有聊天颜色掩码变化时才请求模型。`F8` 可立即强制刷新；点击遮布右上角“返回设置”或再次按 `F9` 可回到编辑模式。
 - 截图使用 Windows 桌面区域捕获；程序不读取游戏内存、不注入 DLL，也不模拟键鼠。
 
@@ -33,7 +33,7 @@ Windows 全局热键 `F8` / `F9` 可能需要管理员权限。编辑模式用�
 1. 运行 `scripts/setup_venv.bat` 安装项目依赖。
 2. 安装 [Inno Setup](https://jrsoftware.org/isdl.php) 6 或 7。
 3. 运行 `scripts/build_installer.bat`。
-4. 安装程序生成在 `dist/OW-Chat-Gentle-Overlay-Setup-0.1.1.exe`。
+4. 安装程序生成在 `dist/OW-Chat-Gentle-Overlay-Setup-0.1.2.exe`。
 
 安装包包含应用、MIT 许可证、上游组件声明和 `.env` 配置模板。DeepSeek API Key 不会打进程序或安装包。
 
